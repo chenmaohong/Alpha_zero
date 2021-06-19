@@ -4,9 +4,9 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
+from options import args
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-trans = 0
 
 
 def set_learning_rate(optimizer, lr):
@@ -20,9 +20,6 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.board_width = board_width
         self.board_height = board_height
-        # transform layers
-        if trans:
-            self.trans1 = nn.Conv2d(4, 4, kernel_size=8, padding=1)
         # common layers
         self.conv1 = nn.Conv2d(4, 32, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
@@ -36,12 +33,7 @@ class Net(nn.Module):
         self.val_fc2 = nn.Linear(64, 1)
 
     def forward(self, state_input):
-        if trans:
-            x = F.relu(self.trans1(state_input))
-            x = F.relu(self.conv1(x))
-        else:
-            # common layers
-            x = F.relu(self.conv1(state_input))
+        x = F.relu(self.conv1(state_input))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
         # action policy layers
@@ -57,18 +49,19 @@ class Net(nn.Module):
 
 
 class PolicyValueNet():
-    def __init__(self, board_width, board_height, global_net, model_file='current_policy.model'):
+    def __init__(self, board_width, board_height, global_net=None):
         self.board_width = board_width
         self.board_height = board_height
         self.l2_const = 1e-4
         self.policy_value_net = Net(board_width, board_height).to(device)
-        self.global_net = global_net
-        self.optimizer = optim.Adam(self.global_net.parameters(), weight_decay=self.l2_const)
-        # else:
-        #     self.optimizer = optim.Adam(self.policy_value_net.parameters(), weight_decay=self.l2_const)
-
-        if model_file:
-            net_params = torch.load(model_file)
+        self.global_net = None
+        if global_net:
+            self.global_net = global_net
+            self.optimizer = optim.Adam(self.global_net.parameters(), weight_decay=self.l2_const)
+        else:
+            self.optimizer = optim.Adam(self.policy_value_net.parameters(), weight_decay=self.l2_const)
+        if args.model_file:
+            net_params = torch.load(args.model_file)
             self.policy_value_net.load_state_dict(net_params)
 
     def policy_value_fn(self, board):
@@ -92,8 +85,10 @@ class PolicyValueNet():
         # set learning rate
         set_learning_rate(self.optimizer, lr)
         # forward
-        log_act_probs, value = self.global_net(state_batch.to(device))
-        # log_act_probs, value = self.policy_value_net(state_batch.to(device))
+        if self.global_net:
+            log_act_probs, value = self.global_net(state_batch.to(device))
+        else:
+            log_act_probs, value = self.policy_value_net(state_batch.to(device))
         # define the loss
         value_loss = F.mse_loss(value.view(-1), winner_batch)
         policy_loss = -torch.mean(torch.sum(mcts_probs * log_act_probs, 1))

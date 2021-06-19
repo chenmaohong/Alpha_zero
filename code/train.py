@@ -7,39 +7,37 @@ from mcts_alphaZero import MCTSPlayer
 from game import Board, Game
 from policy_value_net_pytorch import PolicyValueNet
 from multiprocessing import Pool, cpu_count
+from options import args
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 class TrainPipeline(object):
-    def __init__(self, global_model, init_model=None):
-        self.board_width = 8
-        self.board_height = 8
-        self.n_in_row = 5
+    def __init__(self, global_model=None):
+        self.board_width = args.width
+        self.board_height = args.height
+        self.n_in_row = args.n_in_row
         self.board = Board(width=self.board_width, height=self.board_height, n_in_row=self.n_in_row)
         self.game = Game(self.board)
+
+        self.learn_rate = args.learn_rate
+        self.buffer_size = args.buffer_size
+        self.batch_size = args.batch_size
+        self.data_buffer = deque(maxlen=self.buffer_size)
+        self.check_freq = args.check_freq  # 保存模型的频率
+        self.game_batch_num = args.epochs  # 训练更新的次数
 
         self.temp = 1.0
         self.c_puct = 5
         self.n_playerout = 400
-        self.learn_rate = 2e-3
-        self.buffer_size = 1500
-        self.batch_size = 512
-        self.data_buffer = deque(maxlen=self.buffer_size)
-        self.check_freq = 50  # 保存模型的频率
-        self.game_batch_num = 3000  # 训练更新的次数
-        # if init_model:  # 有无初始模型
-        #     self.policy_value_net = PolicyValueNet(self.board_width, self.board_height, model_file=init_model)
-        # else:
-        #     self.policy_value_net = PolicyValueNet(self.board_width, self.board_height)
-        # if global_model:  # 有无初始模型
-        self.policy_value_net = PolicyValueNet(self.board_width, self.board_height, global_model)
-        # else:
-        #     self.policy_value_net = PolicyValueNet(self.board_width, self.board_height)
+
+        if global_model:  # 有无初始模型
+            self.policy_value_net = PolicyValueNet(self.board_width, self.board_height, global_model)
+        else:
+            self.policy_value_net = PolicyValueNet(self.board_width, self.board_height)
         self.mcts_player = MCTSPlayer(self.policy_value_net.policy_value_fn, c_puct=self.c_puct,
                                       n_playout=self.n_playerout, is_selfplay=1)
 
-    #
     def run(self):
         try:
             for i in range(self.game_batch_num):
@@ -51,7 +49,7 @@ class TrainPipeline(object):
                 else:
                     print("batch i:{}, episode_len:{}".format(i + 1, episode_len))
                 if (i + 1) % self.check_freq == 0:
-                    self.policy_value_net.save_model('./current_policy_15.model')
+                    self.policy_value_net.save_model(args.save_file)
         except KeyboardInterrupt:
             print('\n quit')
 
@@ -66,19 +64,7 @@ class TrainPipeline(object):
             loss, entropy = self.policy_update()
             return loss
         except KeyboardInterrupt:
-            print('\n quit')
-
-    # def task(self):
-    #     for i in range(self.game_batch_num // cpu_count()):
-    #         episode_len = self.collect_selfplay_data()
-    #         if len(self.data_buffer) > self.batch_size:
-    #             loss, entropy = self.policy_update()
-    #             print(("batch i:{}, episode_len:{}, loss:{:.4f}, entropy:{:.4f}").format(i + 1, episode_len, loss,
-    #                                                                                      entropy))
-    #         else:
-    #             print("batch i:{}, episode_len:{}".format(i + 1, episode_len))
-    #         if (i + 1) % self.check_freq == 0:
-    #             self.policy_value_net.save_model('./current_policy.model')
+            print('\n quit: something wrong')
 
     def collect_selfplay_data(self):
         """ collect self-play data for training """
@@ -111,11 +97,3 @@ class TrainPipeline(object):
         winner_batch = [data[2] for data in mini_batch]
         loss = self.policy_value_net.train_step(state_batch, mcts_probs_batch, winner_batch, self.learn_rate)
         return loss
-
-        # loss, entropy = self.policy_value_net.train_step(state_batch, mcts_probs_batch, winner_batch, self.learn_rate)
-        # return loss, entropy
-
-
-if __name__ == '__main__':
-    training_pipeline = TrainPipeline()
-    training_pipeline.run()
